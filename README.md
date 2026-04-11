@@ -158,7 +158,7 @@ curl "http://localhost:3200/"
 **Verify after deploy:**
 
 ```bash
-curl "https://your-app.up.railway.app/api/classify?name=James"
+curl "https://https://hng-stage0-nameclassifierapi-be-production.up.railway.app/api/classify?name=James"
 ```
 
 ---

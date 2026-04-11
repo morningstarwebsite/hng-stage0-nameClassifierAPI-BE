@@ -50,6 +50,13 @@ export async function classifyName(req, res) {
       });
     }
 
+    if (err.code === "UPSTREAM_INVALID_RESPONSE") {
+      return res.status(502).json({
+        status: "error",
+        message: "Upstream service returned an invalid response",
+      });
+    }
+
     // Catch-all for unexpected server errors
     console.error("[classify] Unexpected error:", err);
     return res.status(500).json({
@@ -61,7 +68,7 @@ export async function classifyName(req, res) {
   // --- Handle unpredictable names ---
   // Genderize returns gender: null or count: 0 when it has no data for a name
   if (!raw.gender || raw.count === 0) {
-    return res.status(200).json({
+    return res.status(404).json({
       status: "error",
       message: "No prediction available for the provided name",
     });
