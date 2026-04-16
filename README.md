@@ -1,172 +1,233 @@
-# HNG Stage 0 — Gender Classification API
+# HNG Stage 1 - Profile Intelligence Service
 
-A lightweight REST API that predicts the gender of a given name by integrating with the [Genderize.io](https://genderize.io) API. Built with **Node.js**and **Express** as a clean MVC project.
+This project extends the original Stage 0 Express API into a Stage 1 profile intelligence service. A single name is validated, enriched through Genderize, Agify, and Nationalize on every create request, transformed into assessment-specific fields, stored in PostgreSQL through Sequelize, and served back through a clean MVC API.
 
----
+## What It Does
 
-## Endpoint
+- Accepts a name through `POST /api/profiles`
+- Calls Genderize, Agify, and Nationalize in parallel
+- Transforms upstream data before persistence
+- Stores only processed profile fields, never raw API payloads
+- Deduplicates by normalized name
+- Uses UUID v7 IDs and UTC ISO 8601 timestamps
+- Supports lookup, filtered listing, and deletion
+- Runs an explicit schema migration for the `profiles` table
 
-```
-GET /api/classify?name={name}
-```
+## Tech Stack
 
-### Query Parameters
+- Node.js
+- JavaScript ES modules
+- Express 5
+- Sequelize
+- PostgreSQL
+- Railway deployment
 
-| Parameter | Type   | Required | Description           |
-|-----------|--------|----------|-----------------------|
-| `name`    | string | Yes      | The name to classify  |
+## API Endpoints
 
----
+### `POST /api/profiles`
 
-## Response Examples
-
-### Success
+Create a profile from a request body:
 
 ```json
 {
-  "name": "James",
-  "gender": "male",
-  "probability": 0.98,
-  "sample_size": 144669,
-  "is_confident": true,
-  "processed_at": "2025-07-15T10:23:45.123Z"
+  "name": "Amina"
 }
 ```
 
-### No Prediction Available
+Success response:
+
+```json
+{
+  "status": "success",
+  "data": {
+    "id": "01963f64-b93d-7d6d-91cb-842f0b7f7d31",
+    "name": "Amina",
+    "gender": "female",
+    "probability": 0.99,
+    "sample_size": 1250,
+    "age": 31,
+    "age_group": "adult",
+    "country_id": "NG",
+    "country_probability": 0.81,
+    "created_at": "2026-04-16T12:00:00.000Z",
+    "updated_at": "2026-04-16T12:00:00.000Z"
+  }
+}
+```
+
+Duplicate response:
+
+```json
+{
+  "status": "success",
+  "message": "Profile already exists",
+  "data": {
+    "id": "01963f64-b93d-7d6d-91cb-842f0b7f7d31",
+    "name": "Amina",
+    "gender": "female",
+    "probability": 0.99,
+    "sample_size": 1250,
+    "age": 31,
+    "age_group": "adult",
+    "country_id": "NG",
+    "country_probability": 0.81,
+    "created_at": "2026-04-16T12:00:00.000Z",
+    "updated_at": "2026-04-16T12:00:00.000Z"
+  }
+}
+```
+
+### `GET /api/profiles/:id`
+
+Returns a single stored profile or `404` if it does not exist.
+
+### `GET /api/profiles`
+
+Returns all stored profiles. Supported optional case-insensitive query filters:
+
+- `gender`
+- `country_id`
+- `age_group`
+
+Example:
+
+```bash
+curl "http://localhost:3200/api/profiles?gender=female&country_id=ng&age_group=adult"
+```
+
+### `DELETE /api/profiles/:id`
+
+Deletes a stored profile and returns `204 No Content`.
+
+## Validation Rules
+
+- Missing `name` -> `400`
+- Empty `name` -> `400`
+- Wrong type for `name` -> `422`
+- Invalid upstream profile data -> `404`
+- Upstream connectivity or response failures -> `502`
+
+Every failed request returns JSON in this format:
 
 ```json
 {
   "status": "error",
-  "message": "No prediction available for the provided name"
+  "message": "<message>"
 }
 ```
 
-### Validation Error (400)
+## Data Processing Rules
 
-```json
-{
-  "status": "error",
-  "message": "The 'name' query parameter is required and cannot be empty"
-}
-```
-
----
-
-## `is_confident` Logic
-
-| Condition                        | Value   |
-|----------------------------------|---------|
-| `probability >= 0.7` AND `sample_size >= 100` | `true`  |
-| Otherwise                        | `false` |
-
----
-
-## Error Codes
-
-| Status | Meaning                                     |
-|--------|---------------------------------------------|
-| 400    | Missing or empty `name` parameter           |
-| 422    | `name` is not a plain string                |
-| 502    | Upstream Genderize API is unreachable       |
-| 500    | Unexpected internal server error            |
-
----
+- Genderize: uses `gender`, `probability`, and `count`; stores `count` as `sample_size`; treats `gender: null` or `count: 0` as invalid
+- Agify: uses `age`; derives `age_group` as `child`, `teenager`, `adult`, or `senior`; treats `age: null` as invalid
+- Nationalize: selects the country with the highest probability; stores it as `country_id` and `country_probability`; treats empty country lists as invalid
 
 ## Project Structure
 
-```
-hng-stage0/
-├── src/
-│   ├── controllers/
-│   │   └── classify.controller.js   # Input validation + response shaping
-│   ├── services/
-│   │   └── genderize.service.js     # Genderize API fetch logic
-│   ├── routes/
-│   │   └── classify.routes.js       # Route definitions
-│   ├── app.js                       # Express app (CORS, middleware, routes)
-│   └── server.js                    # Entry point — starts the HTTP server
-├── .env
-├── .gitignore
-├── package.json
-└── README.md
+```text
+src/
+  app.js
+  server.js
+  config/
+    database.js
+  controllers/
+    profileController.js
+  middleware/
+    errorHandler.js
+  models/
+    index.js
+    profile.js
+  routes/
+    profileRoutes.js
+  services/
+    profileService.js
+    profileTransformService.js
+    upstreamService.js
+  utils/
+    appError.js
+test/
+  profileTransform.test.js
 ```
 
----
-
-## Local Setup
+## Setup
 
 ### Prerequisites
 
-- Node.js **v18 or higher** (uses the built-in `fetch` API)
+- Node.js 22+
+- PostgreSQL
 
-### Install & Run
+### Environment Variables
 
-```bash
-# 1. Clone the repository
-git clone https://github.com/morningstarwebsite/hng-stage0-nameClassifierAPI-BE.git
-cd hng-stage0
+Use either a single Railway-style connection string or individual PostgreSQL values.
 
-# 2. Install dependencies
-npm install
+```env
+PORT=3200
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/profile_intelligence
 
-# 4. Start the server
-npm start
+# or
+DB_HOST=127.0.0.1
+DB_PORT=5432
+DB_NAME=profile_intelligence
+DB_USER=postgres
+DB_PASSWORD=postgres
 ```
 
-The server starts on `http://localhost:3200` by default.
+### Install
 
-For development with auto-restart on file changes:
+```bash
+npm install
+```
+
+### Run Database Migration
+
+```bash
+npm run migrate
+```
+
+The server also runs pending migrations on startup.
+
+### Run Locally
 
 ```bash
 npm run dev
 ```
 
----
+or
+
+```bash
+npm start
+```
+
+The app listens on `http://localhost:3200` by default.
 
 ## Testing
 
-No test framework is required — you can verify every case with `curl` or your browser.
+Run the lightweight business-rule tests with:
 
 ```bash
-# Happy path
-curl "http://localhost:3200/api/classify?name=James"
-
-# Missing name (400)
-curl "http://localhost:3200/api/classify"
-
-# Empty name (400)
-curl "http://localhost:3200/api/classify?name="
-
-# Name with no prediction (uncommon name)
-curl "http://localhost:3200/api/classify?name=Zxqwerty"
-
-# Health check
-curl "http://localhost:3200/"
+npm test
 ```
 
----
+You can also smoke test the HTTP API manually:
+
+```bash
+curl -X POST "http://localhost:3200/api/profiles" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Amina"}'
+
+curl "http://localhost:3200/api/profiles"
+```
 
 ## Deploying to Railway
 
-1. Push your code to a GitHub repository.
-2. Go to [railway.app](https://railway.app) and create a **New Project → Deploy from GitHub repo**.
-3. Select your repository. Railway will auto-detect Node.js.
-4. Railway automatically injects the `PORT` environment variable — no manual configuration needed.
-5. Your API will be live at the Railway-provided public URL.
+1. Provision a PostgreSQL database in Railway.
+2. Set `DATABASE_URL` in the Railway service environment if it is not injected automatically.
+3. Deploy this repository as a Node.js service.
+4. Railway provides `PORT`; the app uses it automatically.
+5. On startup, the app connects to PostgreSQL and applies any pending schema migrations.
 
-**Verify after deploy:**
+Example deployed health check:
 
 ```bash
-curl "https://https://hng-stage0-nameclassifierapi-be-production.up.railway.app/api/classify?name=James"
+curl "https://your-railway-app.up.railway.app/"
 ```
-
----
-
-## Tech Stack
-
-- **Runtime:** Node.js 18+
-- **Framework:** Express 4 
-- **External API:** [Genderize.io](https://genderize.io)
-- **CORS:** Wildcard origin (`*`)
-- **Database:** None
