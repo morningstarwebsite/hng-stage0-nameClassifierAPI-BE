@@ -32,13 +32,12 @@ test("transformProfileData keeps only transformed fields", () => {
 
   assert.deepEqual(profile, {
     name: "Amina",
-    normalized_name: "amina",
     gender: "female",
-    probability: 0.99,
-    sample_size: 1250,
+    gender_probability: 0.99,
     age: 31,
     age_group: "adult",
     country_id: "NG",
+    country_name: "Nigeria",
     country_probability: 0.81,
   });
 });

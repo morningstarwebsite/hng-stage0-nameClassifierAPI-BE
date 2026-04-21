@@ -10,7 +10,7 @@ app.use(express.json());
 app.use("/api", profileRouter);
 
 app.get("/", (_req, res) => {
-  res.json({ status: "ok", message: "HNG Stage 1 profile intelligence API is running" });
+  res.json({ status: "ok", message: "HNG Stage 2 profile intelligence API is running" });
 });
 
 app.use(notFoundHandler);

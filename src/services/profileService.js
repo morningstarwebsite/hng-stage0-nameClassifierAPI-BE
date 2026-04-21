@@ -1,5 +1,5 @@
-import { Op, col, fn, where } from "sequelize";
 import { Profile } from "../models/index.js";
+import { Op, fn, col, where } from "sequelize";
 import { AppError } from "../utils/appError.js";
 import {
   fetchAgePrediction,
@@ -7,15 +7,18 @@ import {
   fetchNationalityPrediction,
 } from "./upstreamService.js";
 import {
-  normalizeFilterValue,
   serializeProfile,
   transformProfileData,
   validateNameInput,
 } from "./profileTransformService.js";
+import {
+  buildListProfileQuery,
+  buildSearchProfileQuery,
+} from "./profileQueryService.js";
 
 async function findExistingProfile(normalizedName) {
   return Profile.findOne({
-    where: { normalized_name: normalizedName },
+    where: where(fn("LOWER", col("name")), normalizedName),
   });
 }
 
@@ -29,7 +32,7 @@ export async function createProfileRecord(nameInput) {
   ]);
 
   const payload = transformProfileData(name, genderData, ageData, nationalityData);
-  const existingProfile = await findExistingProfile(payload.normalized_name);
+  const existingProfile = await findExistingProfile(payload.name.toLowerCase());
 
   if (existingProfile) {
     return {
@@ -47,7 +50,8 @@ export async function createProfileRecord(nameInput) {
     };
   } catch (err) {
     if (err.name === "SequelizeUniqueConstraintError") {
-      const concurrentProfile = await findExistingProfile(payload.normalized_name);
+      // A concurrent request may insert the same name after our first existence check.
+      const concurrentProfile = await findExistingProfile(payload.name.toLowerCase());
 
       if (concurrentProfile) {
         return {
@@ -71,30 +75,28 @@ export async function getProfileRecordById(id) {
   return serializeProfile(profile);
 }
 
-export async function listProfileRecords(filters) {
-  const gender = normalizeFilterValue(filters.gender, "gender");
-  const countryId = normalizeFilterValue(filters.country_id, "country_id");
-  const ageGroup = normalizeFilterValue(filters.age_group, "age_group");
-  const andConditions = [];
-
-  if (gender) {
-    andConditions.push(where(fn("LOWER", col("gender")), gender));
-  }
-
-  if (countryId) {
-    andConditions.push(where(fn("LOWER", col("country_id")), countryId));
-  }
-
-  if (ageGroup) {
-    andConditions.push(where(fn("LOWER", col("age_group")), ageGroup));
-  }
-
-  const profiles = await Profile.findAll({
-    where: andConditions.length > 0 ? { [Op.and]: andConditions } : undefined,
-    order: [["created_at", "DESC"]],
+async function runProfileQuery(options) {
+  const result = await Profile.findAndCountAll({
+    where: options.where,
+    order: options.order,
+    limit: options.limit,
+    offset: options.offset,
   });
 
-  return profiles.map(serializeProfile);
+  return {
+    page: options.page,
+    limit: options.limit,
+    total: result.count,
+    data: result.rows.map(serializeProfile),
+  };
+}
+
+export async function listProfileRecords(filters) {
+  return runProfileQuery(buildListProfileQuery(filters));
+}
+
+export async function searchProfileRecords(query) {
+  return runProfileQuery(buildSearchProfileQuery(query));
 }
 
 export async function deleteProfileRecord(id) {

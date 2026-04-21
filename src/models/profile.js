@@ -12,11 +12,7 @@ export function defineProfile(sequelize) {
         defaultValue: () => uuidv7(),
       },
       name: {
-        type: DataTypes.STRING,
-        allowNull: false,
-      },
-      normalized_name: {
-        type: DataTypes.STRING,
+         type: DataTypes.STRING,
         allowNull: false,
         unique: true,
       },
@@ -24,12 +20,8 @@ export function defineProfile(sequelize) {
         type: DataTypes.STRING,
         allowNull: false,
       },
-      probability: {
+      gender_probability: {
         type: DataTypes.FLOAT,
-        allowNull: false,
-      },
-      sample_size: {
-        type: DataTypes.INTEGER,
         allowNull: false,
       },
       age: {
@@ -44,16 +36,23 @@ export function defineProfile(sequelize) {
         type: DataTypes.STRING(2),
         allowNull: false,
       },
+      country_name: {
+        type: DataTypes.STRING,
+        allowNull: false,
+      },
       country_probability: {
         type: DataTypes.FLOAT,
         allowNull: false,
       },
+      created_at: {
+        type: DataTypes.DATE,
+        allowNull: false,
+        defaultValue: DataTypes.NOW,
+      },
     },
     {
       tableName: "profiles",
-      timestamps: true,
-      createdAt: "created_at",
-      updatedAt: "updated_at",
+      timestamps: false,
     },
   );
 }

@@ -1,8 +1,15 @@
+import { fileURLToPath } from "node:url";
 import { Sequelize } from "sequelize";
 import { sequelize } from "../config/database.js";
 import { migration as createProfilesMigration } from "./20260416-create-profiles.js";
+import { migration as stage2ProfileQueryMigration } from "./20260421-stage2-profile-query-updates.js";
+import { migration as alignProfilesSchemaMigration } from "./20260421-align-profiles-required-schema.js";
 
-const migrations = [createProfilesMigration];
+const migrations = [
+  createProfilesMigration,
+  stage2ProfileQueryMigration,
+  alignProfilesSchemaMigration,
+];
 const migrationTableName = "schema_migrations";
 
 async function ensureMigrationTable(queryInterface) {
@@ -57,8 +64,9 @@ export async function runMigrations() {
   }
 }
 
-const currentFilePath = new URL(import.meta.url).pathname.replace(/\\/g, "/");
-const isDirectExecution = process.argv[1]?.replace(/\\/g, "/") === currentFilePath;
+const currentFilePath = fileURLToPath(import.meta.url).replace(/\\/g, "/");
+const invokedFilePath = process.argv[1]?.replace(/\\/g, "/");
+const isDirectExecution = invokedFilePath === currentFilePath;
 
 if (isDirectExecution) {
   sequelize

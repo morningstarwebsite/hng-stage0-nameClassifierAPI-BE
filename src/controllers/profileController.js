@@ -3,6 +3,7 @@ import {
   deleteProfileRecord,
   getProfileRecordById,
   listProfileRecords,
+  searchProfileRecords,
 } from "../services/profileService.js";
 
 export async function createProfile(req, res, next) {
@@ -38,7 +39,26 @@ export async function listProfiles(req, res, next) {
 
     res.status(200).json({
       status: "success",
-      data: profiles,
+      page: profiles.page,
+      limit: profiles.limit,
+      total: profiles.total,
+      data: profiles.data,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function searchProfiles(req, res, next) {
+  try {
+    const profiles = await searchProfileRecords(req.query);
+
+    res.status(200).json({
+      status: "success",
+      page: profiles.page,
+      limit: profiles.limit,
+      total: profiles.total,
+      data: profiles.data,
     });
   } catch (err) {
     next(err);

@@ -1,4 +1,5 @@
 import { AppError } from "../utils/appError.js";
+import { getCountryName } from "./countryLookupService.js";
 
 function toFiniteNumber(value, message) {
   const numericValue = Number(value);
@@ -88,14 +89,9 @@ export function transformProfileData(name, genderData, ageData, nationalityData)
   }
 
   const sanitizedName = normalizeName(name);
-  const normalized_name = sanitizedName.toLowerCase();
-  const probability = toFiniteNumber(
+  const gender_probability = toFiniteNumber(
     genderData.probability,
     "Genderize returned invalid probability data",
-  );
-  const sample_size = toFiniteNumber(
-    genderData.count,
-    "Genderize returned invalid sample size data",
   );
   const age = toFiniteNumber(ageData.age, "Agify returned invalid age data");
   const country_probability = toFiniteNumber(
@@ -105,29 +101,29 @@ export function transformProfileData(name, genderData, ageData, nationalityData)
 
   return {
     name: sanitizedName,
-    normalized_name,
     gender: genderData.gender,
-    probability,
-    sample_size,
+    gender_probability,
     age,
     age_group: classifyAgeGroup(age),
     country_id: topCountry.country_id.toUpperCase(),
+    country_name: getCountryName(topCountry.country_id),
     country_probability,
   };
 }
 
 export function serializeProfile(profile) {
+  const countryName = profile.country_name || getCountryName(profile.country_id);
+
   return {
     id: profile.id,
     name: profile.name,
     gender: profile.gender,
-    probability: profile.probability,
-    sample_size: profile.sample_size,
+    gender_probability: profile.gender_probability,
     age: profile.age,
     age_group: profile.age_group,
     country_id: profile.country_id,
+    country_name: countryName,
     country_probability: profile.country_probability,
     created_at: profile.created_at instanceof Date ? profile.created_at.toISOString() : profile.created_at,
-    updated_at: profile.updated_at instanceof Date ? profile.updated_at.toISOString() : profile.updated_at,
   };
 }

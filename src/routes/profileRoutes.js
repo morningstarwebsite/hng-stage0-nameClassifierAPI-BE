@@ -4,11 +4,13 @@ import {
   deleteProfile,
   getProfileById,
   listProfiles,
+  searchProfiles,
 } from "../controllers/profileController.js";
 
 const router = Router();
 
 router.post("/profiles", createProfile);
+router.get("/profiles/search", searchProfiles);
 router.get("/profiles/:id", getProfileById);
 router.get("/profiles", listProfiles);
 router.delete("/profiles/:id", deleteProfile);

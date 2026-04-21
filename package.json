@@ -6,6 +6,7 @@
   "main": "src/server.js",
   "scripts": {
     "migrate": "node src/migrations/runMigrations.js",
+    "seed:profiles": "node src/scripts/seedProfiles.js",
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
     "test": "node --test"
