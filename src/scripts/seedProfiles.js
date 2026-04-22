@@ -2,9 +2,10 @@ import { readFile } from "node:fs/promises";
 import { v7 as uuidv7 } from "uuid";
 import { connectDatabase, sequelize } from "../config/database.js";
 import { Profile } from "../models/index.js";
-import { Op, fn, col, where } from "sequelize";
 import { getCountryName } from "../services/countryLookupService.js";
 import { classifyAgeGroup, normalizeName } from "../services/profileTransformService.js";
+
+const UPSERT_BATCH_SIZE = 250;
 
 function assertSeedRecord(record, index) {
   const requiredKeys = [
@@ -54,39 +55,63 @@ function mapSeedRecordToProfile(record) {
   };
 }
 
+function chunkRecords(records, batchSize) {
+  const batches = [];
+
+  for (let index = 0; index < records.length; index += batchSize) {
+    batches.push(records.slice(index, index + batchSize));
+  }
+
+  return batches;
+}
+
 async function seedProfiles(seedFilePath) {
   const fileContents = await readFile(seedFilePath, "utf8");
   const payload = JSON.parse(fileContents);
   const records = extractSeedRecords(payload);
 
-  let createdCount = 0;
-  let updatedCount = 0;
+  const mappedProfiles = [];
+  const profileNames = [];
 
   for (const [index, record] of records.entries()) {
     assertSeedRecord(record, index);
     const profilePayload = mapSeedRecordToProfile(record);
-    const existingProfile = await Profile.findOne({
-      where: where(fn("LOWER", col("name")), profilePayload.name.toLowerCase()),
+    mappedProfiles.push(profilePayload);
+    profileNames.push(profilePayload.name);
+  }
+
+  const existingProfiles = await Profile.findAll({
+    attributes: ["name"],
+    where: {
+      name: profileNames,
+    },
+  });
+  const existingNameSet = new Set(existingProfiles.map((profile) => profile.name));
+
+  let createdCount = 0;
+  let updatedCount = 0;
+
+  // Batched upserts keep Railway seeding fast enough to avoid thousands of round trips.
+  for (const batch of chunkRecords(mappedProfiles, UPSERT_BATCH_SIZE)) {
+    const batchExistingCount = batch.reduce(
+      (count, profile) => count + (existingNameSet.has(profile.name) ? 1 : 0),
+      0,
+    );
+
+    await Profile.bulkCreate(batch, {
+      updateOnDuplicate: [
+        "gender",
+        "gender_probability",
+        "age",
+        "age_group",
+        "country_id",
+        "country_name",
+        "country_probability",
+      ],
     });
 
-    // Seeding is idempotent: matching names are updated instead of inserted again.
-    if (existingProfile) {
-      await existingProfile.update({
-        name: profilePayload.name,
-        gender: profilePayload.gender,
-        gender_probability: profilePayload.gender_probability,
-        age: profilePayload.age,
-        age_group: profilePayload.age_group,
-        country_id: profilePayload.country_id,
-        country_name: profilePayload.country_name,
-        country_probability: profilePayload.country_probability,
-      });
-      updatedCount += 1;
-      continue;
-    }
-
-    await Profile.create(profilePayload);
-    createdCount += 1;
+    updatedCount += batchExistingCount;
+    createdCount += batch.length - batchExistingCount;
   }
 
   console.log(`[seed] completed: created=${createdCount} updated=${updatedCount}`);
