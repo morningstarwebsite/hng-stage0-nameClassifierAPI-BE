@@ -1,113 +1,154 @@
-# HNG Stage 2 - Profile Intelligence Service
+# Insighta Labs+ Stage 3 Backend
 
-This project continues the Stage 1 profile intelligence service without rebuilding it. A single name is still validated, enriched through Genderize, Agify, and Nationalize, transformed into assessment-specific fields, stored in PostgreSQL through Sequelize, and served back through the existing MVC API. Stage 2 adds an intelligence query engine with combined filtering, sorting, pagination, and rule-based natural-language search on top of the same `profiles` table.
+This repository extends the existing HNG Stage 2 profile intelligence API into a secured Stage 3 platform without rebuilding the original system. The Stage 2 profile enrichment, filtering, sorting, pagination, and natural-language search behavior remain in place, and Stage 3 layers GitHub OAuth with PKCE, rotating sessions, role-based access control, API version enforcement, CSV export, rate limiting, and request logging on top.
 
-## What It Does
+## Architecture
 
-- Accepts a name through `POST /api/profiles`
-- Calls Genderize, Agify, and Nationalize in parallel
-- Transforms upstream data before persistence
-- Stores only processed profile fields, never raw API payloads
-- Deduplicates by unique `name`
-- Uses UUID v7 IDs and UTC ISO 8601 timestamps
-- Supports lookup, filtered listing, sorting, pagination, natural-language search, and deletion
-- Runs an explicit schema migration for the `profiles` table
-- Prepares one-time idempotent JSON seeding for larger 2026 datasets
+The project keeps the original Node.js, JavaScript ES modules, Express, Sequelize, PostgreSQL, and Railway deployment stack.
 
-## Final Database Schema
+Request flow:
 
-The `profiles` table is aligned to this final required structure:
+1. Express receives the request in [src/app.js](src/app.js).
+2. Global middleware applies CORS, cookies, structured request logging, rate limiting, CSRF checks, API version checks, and authentication.
+3. Routes delegate to controllers in [src/controllers](src/controllers).
+4. Controllers call service-layer logic for auth, tokens, authorization, profile queries, export, and upstream profile enrichment.
+5. Sequelize models in [src/models](src/models) persist profiles, users, and refresh tokens in PostgreSQL.
+6. Startup runs the explicit migration runner in [src/migrations/runMigrations.js](src/migrations/runMigrations.js) before serving traffic.
+
+## Stage 3 Features
+
+- Keeps Stage 2 profile behavior for filtering, sorting, pagination, and natural-language search.
+- Adds GitHub OAuth login with PKCE.
+- Creates or updates application users in a `users` table.
+- Uses short-lived access tokens and rotating refresh tokens.
+- Protects every `/api/*` route.
+- Enforces `X-API-Version: 1` on all `/api/*` requests.
+- Adds CSV export for filtered profile datasets.
+- Adds admin and analyst roles with centralized authorization guards.
+- Adds in-process rate limiting and structured request logging.
+- Uses HTTP-only cookies for browser sessions plus CSRF protection on state-changing session-backed requests.
+
+## Data Model
+
+### Profiles
+
+The existing `profiles` table remains the main intelligence dataset.
 
 | Field | Type | Notes |
 | --- | --- | --- |
 | `id` | `UUID v7` | Primary key |
-| `name` | `VARCHAR` | Person's full name, unique |
+| `name` | `VARCHAR` | Unique |
 | `gender` | `VARCHAR` | `male` or `female` |
 | `gender_probability` | `FLOAT` | Confidence score |
 | `age` | `INT` | Exact age |
 | `age_group` | `VARCHAR` | `child`, `teenager`, `adult`, `senior` |
 | `country_id` | `VARCHAR(2)` | ISO country code |
-| `country_name` | `VARCHAR` | Full country name |
+| `country_name` | `VARCHAR` | Derived country name |
 | `country_probability` | `FLOAT` | Confidence score |
-| `created_at` | `TIMESTAMP` | Auto-generated |
+| `created_at` | `TIMESTAMP` | UTC timestamp |
 
-Schema notes:
+### Users
 
-- `name` is unique at the database level
-- `gender` is constrained to `male` or `female`
-- `age_group` is constrained to `child`, `teenager`, `adult`, or `senior`
-- `created_at` is generated automatically by PostgreSQL
-- Legacy transition columns such as `normalized_name`, `probability`, `sample_size`, and `updated_at` are not part of the final schema
+Stage 3 adds a `users` table.
 
-## Tech Stack
+| Field | Type | Notes |
+| --- | --- | --- |
+| `id` | `UUID v7` | Primary key |
+| `github_id` | `VARCHAR` | Unique GitHub user id |
+| `username` | `VARCHAR` | GitHub login |
+| `email` | `VARCHAR` | Optional |
+| `avatar_url` | `TEXT` | Optional |
+| `role` | `ENUM` | `admin` or `analyst`, default `analyst` |
+| `is_active` | `BOOLEAN` | Default `true` |
+| `last_login_at` | `TIMESTAMP` | Updated on successful GitHub login |
+| `created_at` | `TIMESTAMP` | Created timestamp |
 
-- Node.js
-- JavaScript ES modules
-- Express 5
-- Sequelize
-- PostgreSQL
-- Railway deployment
+### Refresh Tokens
 
-## API Endpoints
+Stage 3 also adds a `refresh_tokens` table to support session rotation.
 
-### `POST /api/profiles`
+| Field | Type | Notes |
+| --- | --- | --- |
+| `id` | `UUID v7` | Primary key |
+| `user_id` | `UUID` | Foreign key to `users.id` |
+| `token_hash` | `VARCHAR` | Stored hashed token value |
+| `expires_at` | `TIMESTAMP` | 5 minute expiry |
+| `revoked_at` | `TIMESTAMP` | Set immediately on logout or refresh rotation |
+| `replaced_by_token_id` | `UUID` | Rotation chain reference |
+| `user_agent` | `TEXT` | Optional request metadata |
+| `ip_address` | `VARCHAR` | Optional request metadata |
+| `created_at` | `TIMESTAMP` | Created timestamp |
 
-Create a profile from a request body:
+## Authentication Flow
+
+Only GitHub OAuth is supported.
+
+1. Client calls `GET /auth/github`.
+2. The backend generates a PKCE verifier and state value, stores them in short-lived cookies, and redirects to GitHub.
+3. GitHub redirects back to `GET /auth/github/callback`.
+4. The backend validates state, exchanges the code using PKCE, fetches the GitHub profile and email data, and upserts the local user.
+5. The backend issues:
+   - a 3 minute JWT access token
+   - a 5 minute opaque refresh token stored hashed in PostgreSQL
+   - an HTTP-only access token cookie
+   - an HTTP-only refresh token cookie
+   - a CSRF token cookie for state-changing browser requests
+6. `POST /auth/refresh` rotates the refresh token immediately and issues a new access token and CSRF token.
+7. `POST /auth/logout` revokes the current refresh token and clears session cookies.
+
+Inactive users are blocked with `403` on all protected requests, including refresh.
+
+## Role Model
+
+- `admin`: full profile access, including `POST /api/profiles` and `DELETE /api/profiles/:id`
+- `analyst`: read-only access to listing, lookup, search, and export endpoints
+
+Role checks are centralized through middleware and the authorization service rather than being scattered through controllers.
+
+## API Versioning
+
+Every `/api/*` request must include:
+
+```http
+X-API-Version: 1
+```
+
+If the header is missing, the API returns:
 
 ```json
 {
-  "name": "Amina"
+  "status": "error",
+  "message": "API version header required"
 }
 ```
 
-Success response:
+with `400 Bad Request`.
 
-```json
-{
-  "status": "success",
-  "data": {
-    "id": "01963f64-b93d-7d6d-91cb-842f0b7f7d31",
-    "name": "Amina",
-    "gender": "female",
-    "gender_probability": 0.99,
-    "age": 31,
-    "age_group": "adult",
-    "country_id": "NG",
-    "country_name": "Nigeria",
-    "country_probability": 0.81,
-    "created_at": "2026-04-16T12:00:00.000Z"
-  }
-}
-```
+## Endpoints
 
-Duplicate response:
+### Auth
 
-```json
-{
-  "status": "success",
-  "message": "Profile already exists",
-  "data": {
-    "id": "01963f64-b93d-7d6d-91cb-842f0b7f7d31",
-    "name": "Amina",
-    "gender": "female",
-    "gender_probability": 0.99,
-    "age": 31,
-    "age_group": "adult",
-    "country_id": "NG",
-    "country_name": "Nigeria",
-    "country_probability": 0.81,
-    "created_at": "2026-04-16T12:00:00.000Z"
-  }
-}
-```
+- `GET /auth/github`
+- `GET /auth/github/callback`
+- `POST /auth/refresh`
+- `POST /auth/logout`
 
-### `GET /api/profiles/:id`
+### Profiles
 
-Returns a single stored profile or `404` if it does not exist.
+All `/api/*` endpoints require authentication and `X-API-Version: 1`.
 
-### `GET /api/profiles`
+- `GET /api/profiles`
+- `GET /api/profiles/search`
+- `GET /api/profiles/:id`
+- `POST /api/profiles`
+- `DELETE /api/profiles/:id`
+- `GET /api/profiles/export?format=csv`
 
-Returns paginated stored profiles with combined filtering and sorting. Supported optional case-insensitive query filters:
+## Querying and Pagination
+
+Stage 2 filtering, sorting, and natural-language parsing are preserved.
+
+Supported list filters:
 
 - `gender`
 - `age_group`
@@ -116,17 +157,14 @@ Returns paginated stored profiles with combined filtering and sorting. Supported
 - `max_age`
 - `min_gender_probability`
 - `min_country_probability`
+- `sort_by`
+- `order`
+- `page`
+- `limit`
 
-Supported sorting parameters:
+Search continues to use `GET /api/profiles/search?q=...` and the same sorting and pagination parameters.
 
-
-Example:
-
-```bash
-curl "http://localhost:3200/api/profiles?gender=female&country_id=ng&age_group=adult&min_gender_probability=0.8&sort_by=created_at&order=desc&page=1&limit=10"
-```
-
-Response shape:
+Paginated responses now include:
 
 ```json
 {
@@ -134,73 +172,77 @@ Response shape:
   "page": 1,
   "limit": 10,
   "total": 24,
-  "data": [
-    {
-      "id": "01963f64-b93d-7d6d-91cb-842f0b7f7d31",
-      "name": "Amina",
-      "gender": "female",
-      "gender_probability": 0.99,
-      "age": 31,
-      "age_group": "adult",
-      "country_id": "NG",
-      "country_name": "Nigeria",
-      "country_probability": 0.81,
-      "created_at": "2026-04-16T12:00:00.000Z"
-    }
-  ]
+  "total_pages": 3,
+  "links": {
+    "self": "https://api.example.com/api/profiles?page=1&limit=10",
+    "next": "https://api.example.com/api/profiles?page=2&limit=10",
+    "prev": null
+  },
+  "data": []
 }
 ```
 
-### `GET /api/profiles/search?q=...`
+## CSV Export
 
-Runs a rule-based natural-language search and returns the same pagination structure as `GET /api/profiles`.
+`GET /api/profiles/export?format=csv` reuses the same validated filter and sorting logic as `GET /api/profiles`.
 
-Examples:
+Behavior:
 
-```bash
-curl "http://localhost:3200/api/profiles/search?q=young%20males"
-curl "http://localhost:3200/api/profiles/search?q=females%20above%2030"
-curl "http://localhost:3200/api/profiles/search?q=adult%20males%20from%20kenya&sort_by=age&order=asc"
+- honors the same direct filters
+- honors the same sort parameters
+- exports the filtered dataset in current sort order
+- does not require a separate query language
+- returns CSV in this exact column order:
+
+```text
+id,name,gender,gender_probability,age,age_group,country_id,country_name,country_probability,created_at
 ```
 
-If a query cannot be interpreted, the API returns:
+## Security Controls
 
-```json
-{
-  "status": "error",
-  "message": "Unable to interpret query"
-}
+### Sessions and Cookies
+
+- access token cookie: HTTP-only, 3 minutes
+- refresh token cookie: HTTP-only, 5 minutes
+- CSRF token cookie: readable by the client so it can be echoed in `X-CSRF-Token`
+- OAuth state and PKCE verifier cookies are short-lived and cleared after callback
+
+### CSRF
+
+CSRF protection applies to session-backed state-changing requests such as:
+
+- `POST /auth/refresh`
+- `POST /auth/logout`
+- `POST /api/profiles`
+- `DELETE /api/profiles/:id`
+
+If the request uses session cookies, the caller must send `X-CSRF-Token` matching the `csrf_token` cookie.
+
+### CORS
+
+The API allows wildcard CORS:
+
+```http
+Access-Control-Allow-Origin: *
 ```
 
-### `DELETE /api/profiles/:id`
+### Rate Limiting
 
-Deletes a stored profile and returns `204 No Content`.
+- `/auth/*`: 10 requests per minute
+- all other protected routes: 60 requests per minute per authenticated user
 
-## Validation Rules
+### Logging
 
-- Missing `name` -> `400`
-- Empty `name` -> `400`
-- Wrong type for `name` -> `422`
-- Missing `q` for search -> `400`
-- Empty `q` for search -> `400`
-- Invalid query parameter types or values -> `422`
-- Invalid upstream profile data -> `404`
-- Upstream connectivity or response failures -> `502`
+Every request is logged in structured form with:
 
-Query parameter validation rules:
+- method
+- endpoint
+- status code
+- response time
 
-- Unknown query parameters are rejected
-- `page` and `limit` must be positive integers
-- `limit > 50` is rejected with `422`
-- `sort_by` must be `age`, `created_at`, or `gender_probability`
-- `order` must be `asc` or `desc`
-- `gender` must be `male` or `female`
-- `age_group` must be `child`, `teenager`, `adult`, or `senior`
-- `country_id` must be a two-letter country code
-- `min_age` cannot exceed `max_age`
-- Probability filters must be numeric values from `0` to `1`
+## Consistent Error Format
 
-Every failed request returns JSON in this format:
+All handled errors return JSON in this shape:
 
 ```json
 {
@@ -208,88 +250,6 @@ Every failed request returns JSON in this format:
   "message": "<message>"
 }
 ```
-
-## Data Processing Rules
-
-- Genderize: uses `gender` and `probability`; stores the confidence score as `gender_probability`; treats `gender: null` or `count: 0` as invalid
-- Agify: uses `age`; derives `age_group` as `child`, `teenager`, `adult`, or `senior`; treats `age: null` as invalid
-- Nationalize: selects the country with the highest probability; stores it as `country_id`, derives `country_name`, and stores `country_probability`; treats empty country lists as invalid
-
-## Natural-Language Parsing
-
-The search endpoint uses deterministic rule-based parsing only. No AI model, LLM, embeddings, or fuzzy generation is involved.
-
-Supported keyword families:
-
-- Gender keywords: `male`, `males`, `man`, `men`, `boy`, `boys` map to `gender=male`
-- Gender keywords: `female`, `females`, `woman`, `women`, `girl`, `girls` map to `gender=female`
-- Age-group keywords: `child`, `children`, `teen`, `teens`, `teenager`, `teenagers`, `adult`, `adults`, `senior`, `seniors`
-- Special age phrase: `young` maps to `min_age=16` and `max_age=24` for parsing only
-- Minimum-age phrases: `above 30`, `over 30`, `older than 30`, `at least 30`
-- Maximum-age phrases: `below 20`, `under 20`, `younger than 20`, `at most 20`
-- Country phrases: `from angola`, `from kenya`, and other English country names that resolve to ISO 3166-1 alpha-2 country codes
-
-Parsing behavior:
-
-- The parser normalizes the query to lowercase and checks it for supported keywords and phrases
-- If only one gender family is present, that gender filter is added
-- If both male and female terms are present, gender is treated as ambiguous and omitted instead of forcing one side
-- Age groups can be combined with numeric bounds, for example `teenagers above 17`
-- The parser resolves `from <country name>` into a stored `country_id` value
-- The resulting parsed filters are passed into the same Sequelize query builder used by `GET /api/profiles`
-
-Examples:
-
-- `young males` -> `gender=male`, `min_age=16`, `max_age=24`
-- `females above 30` -> `gender=female`, `min_age=30`
-- `people from angola` -> `country_id=AO`
-- `adult males from kenya` -> `gender=male`, `age_group=adult`, `country_id=KE`
-- `male and female teenagers above 17` -> `age_group=teenager`, `min_age=17`
-
-Parser limitations:
-
-- It only understands the supported keyword and phrase families documented above
-- It does not infer intent from arbitrary prose or unsupported synonyms
-- It does not persist `young` as a database age group; it only expands it into an age range during parsing
-- Queries with no recognized rule match return `Unable to interpret query`
-
-## Seeding Large 2026 Data
-
-The codebase is prepared for a one-time JSON seed file import.
-
-Expected item format:
-
-```json
-{
-  "id": "01963f64-b93d-7d6d-91cb-842f0b7f7d31",
-  "name": "Amina",
-  "gender": "female",
-  "gender_probability": 0.99,
-  "age": 31,
-  "age_group": "adult",
-  "country_id": "NG",
-  "country_name": "Nigeria",
-  "country_probability": 0.81
-}
-```
-
-Run it with:
-
-```bash
-npm run seed:profiles -- ./path/to/seed.json
-```
-
-The seeder accepts either:
-
-- a raw JSON array of profile objects
-- an object with a top-level `profiles` array, such as `seed_profiles.json`
-
-Duplicate prevention:
-
-- The database enforces uniqueness on `name`
-- The seed script checks for an existing profile by case-insensitive `name`
-- If a matching profile already exists, it updates the existing row instead of creating a duplicate
-- Re-running the same seed file is therefore idempotent
 
 ## Project Structure
 
@@ -300,56 +260,86 @@ src/
   config/
     database.js
   controllers/
+    authController.js
     profileController.js
   middleware/
+    apiVersion.js
+    authentication.js
+    authorization.js
+    csrfProtection.js
     errorHandler.js
+    rateLimiter.js
+    requestLogger.js
   migrations/
     20260416-create-profiles.js
     20260421-align-profiles-required-schema.js
     20260421-stage2-profile-query-updates.js
+    20260428-stage3-auth-and-security.js
     runMigrations.js
   models/
     index.js
     profile.js
+    refreshToken.js
+    user.js
   routes/
+    authRoutes.js
     profileRoutes.js
   services/
+    authCookieService.js
+    authService.js
+    authorizationService.js
     countryLookupService.js
+    exportService.js
+    paginationService.js
     profileQueryService.js
     profileSearchService.js
     profileService.js
     profileTransformService.js
+    tokenService.js
     upstreamService.js
   scripts/
     seedProfiles.js
   utils/
     appError.js
+    env.js
 test/
   profileQuery.test.js
   profileTransform.test.js
+  stage3Infrastructure.test.js
 ```
 
-## Setup
+## Local Setup
 
 ### Prerequisites
 
 - Node.js 22+
 - PostgreSQL
+- a GitHub OAuth app
 
 ### Environment Variables
 
-Use either a single Railway-style connection string or individual PostgreSQL values.
+Copy the example values from [.env.example](.env.example).
+
+Required application settings:
 
 ```env
 PORT=3200
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/profile_intelligence
+ACCESS_TOKEN_SECRET=replace-with-a-long-random-secret
+GITHUB_CLIENT_ID=your-github-oauth-client-id
+GITHUB_CLIENT_SECRET=your-github-oauth-client-secret
+GITHUB_REDIRECT_URI=http://localhost:3200/auth/github/callback
+```
 
-# or
+Optional database split variables if `DATABASE_URL` is not used:
+
+```env
 DB_HOST=127.0.0.1
 DB_PORT=5432
 DB_NAME=profile_intelligence
 DB_USER=postgres
 DB_PASSWORD=postgres
+NODE_ENV=development
 ```
 
 ### Install
@@ -358,15 +348,15 @@ DB_PASSWORD=postgres
 npm install
 ```
 
-### Run Database Migration
+### Run Migrations
 
 ```bash
 npm run migrate
 ```
 
-The server also runs pending migrations on startup.
+The app also runs pending migrations automatically at startup.
 
-### Run Locally
+### Start the Server
 
 ```bash
 npm run dev
@@ -378,38 +368,30 @@ or
 npm start
 ```
 
-The app listens on `http://localhost:3200` by default.
-
 ## Testing
 
-Run the lightweight business-rule tests with:
+Run the unit tests with:
 
 ```bash
 npm test
 ```
 
-You can also smoke test the HTTP API manually:
+Manual smoke examples after authenticating:
 
 ```bash
-curl -X POST "http://localhost:3200/api/profiles" \
-  -H "Content-Type: application/json" \
-  -d '{"name":"Amina"}'
+curl -H "Authorization: Bearer <access-token>" -H "X-API-Version: 1" "http://localhost:3200/api/profiles?gender=female&page=1&limit=10"
 
-curl "http://localhost:3200/api/profiles?gender=female&sort_by=created_at&order=desc&page=1&limit=10"
+curl -H "Authorization: Bearer <access-token>" -H "X-API-Version: 1" "http://localhost:3200/api/profiles/search?q=young%20males"
 
-curl "http://localhost:3200/api/profiles/search?q=young%20males"
+curl -H "Authorization: Bearer <access-token>" -H "X-API-Version: 1" "http://localhost:3200/api/profiles/export?format=csv&country_id=NG&sort_by=created_at&order=desc"
 ```
 
-## Deploying to Railway
+## Railway Deployment
 
-1. Provision a PostgreSQL database in Railway.
-2. Set `DATABASE_URL` in the Railway service environment if it is not injected automatically.
-3. Deploy this repository as a Node.js service.
-4. Railway provides `PORT`; the app uses it automatically.
-5. On startup, the app connects to PostgreSQL and applies any pending schema migrations.
-
-Example deployed health check:
-
-```bash
-curl "https://your-railway-app.up.railway.app/"
-```
+1. Provision PostgreSQL in Railway.
+2. Set `DATABASE_URL` if Railway does not inject it automatically.
+3. Set `ACCESS_TOKEN_SECRET`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, and `GITHUB_REDIRECT_URI`.
+4. Ensure `GITHUB_REDIRECT_URI` uses your deployed Railway URL, for example `https://your-app.up.railway.app/auth/github/callback`.
+5. Deploy the service with `npm start`.
+6. On boot the service authenticates to PostgreSQL and runs pending migrations.
+7. Test the root route and the OAuth callback URL after deployment.

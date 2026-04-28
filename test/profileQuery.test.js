@@ -1,7 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { Op } from "sequelize";
-import { buildListProfileQuery, buildSearchProfileQuery } from "../src/services/profileQueryService.js";
+import {
+  buildListProfileExportQuery,
+  buildListProfileQuery,
+  buildSearchProfileQuery,
+} from "../src/services/profileQueryService.js";
 import { parseNaturalLanguageProfileQuery } from "../src/services/profileSearchService.js";
 
 test("buildListProfileQuery builds combined filters and pagination", () => {

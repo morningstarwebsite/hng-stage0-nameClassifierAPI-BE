@@ -223,7 +223,7 @@ function buildWhereClause(filters) {
   return where;
 }
 
-function buildQueryOptions(filters, query) {
+function buildQueryOptions(filters, query, options = {}) {
   const page = parsePositiveInteger(query.page, 1);
   const limit = parsePositiveInteger(query.limit, 10, 50);
   const sortBy = parseSortField(query.sort_by);
@@ -233,10 +233,18 @@ function buildQueryOptions(filters, query) {
     throw invalidQueryParametersError();
   }
 
-  return {
+  const queryOptions = {
     where: buildWhereClause(filters),
     // A stable secondary sort keeps pagination deterministic when primary values tie.
     order: [[sortFieldMap[sortBy], order], ["id", "ASC"]],
+  };
+
+  if (!options.paginate) {
+    return queryOptions;
+  }
+
+  return {
+    ...queryOptions,
     page,
     limit,
     offset: (page - 1) * limit,
@@ -257,7 +265,12 @@ function extractDirectFilters(query) {
 
 export function buildListProfileQuery(query) {
   validateAllowedKeys(query, allowedListQueryKeys);
-  return buildQueryOptions(extractDirectFilters(query), query);
+  return buildQueryOptions(extractDirectFilters(query), query, { paginate: true });
+}
+
+export function buildListProfileExportQuery(query) {
+  validateAllowedKeys(query, allowedListQueryKeys);
+  return buildQueryOptions(extractDirectFilters(query), query, { paginate: false });
 }
 
 export function buildSearchProfileQuery(query) {
@@ -272,5 +285,5 @@ export function buildSearchProfileQuery(query) {
   // Search reuses the same query builder as direct filters after the text is parsed.
   const filters = parseNaturalLanguageProfileQuery(searchTerm);
 
-  return buildQueryOptions(filters, query);
+  return buildQueryOptions(filters, query, { paginate: true });
 }

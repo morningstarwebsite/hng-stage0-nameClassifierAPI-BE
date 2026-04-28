@@ -5,6 +5,8 @@ import {
   listProfileRecords,
   searchProfileRecords,
 } from "../services/profileService.js";
+import { buildPaginatedPayload } from "../services/paginationService.js";
+import { exportProfiles } from "../services/exportService.js";
 
 export async function createProfile(req, res, next) {
   try {
@@ -37,13 +39,7 @@ export async function listProfiles(req, res, next) {
   try {
     const profiles = await listProfileRecords(req.query);
 
-    res.status(200).json({
-      status: "success",
-      page: profiles.page,
-      limit: profiles.limit,
-      total: profiles.total,
-      data: profiles.data,
-    });
+    res.status(200).json(buildPaginatedPayload(req, profiles));
   } catch (err) {
     next(err);
   }
@@ -53,13 +49,20 @@ export async function searchProfiles(req, res, next) {
   try {
     const profiles = await searchProfileRecords(req.query);
 
-    res.status(200).json({
-      status: "success",
-      page: profiles.page,
-      limit: profiles.limit,
-      total: profiles.total,
-      data: profiles.data,
-    });
+    res.status(200).json(buildPaginatedPayload(req, profiles));
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function exportProfilesAsCsv(req, res, next) {
+  try {
+    const { format, ...filters } = req.query;
+    const csv = await exportProfiles(filters, format);
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", 'attachment; filename="profiles.csv"');
+    res.status(200).send(csv);
   } catch (err) {
     next(err);
   }

@@ -13,6 +13,7 @@ import {
 } from "./profileTransformService.js";
 import {
   buildListProfileQuery,
+  buildListProfileExportQuery,
   buildSearchProfileQuery,
 } from "./profileQueryService.js";
 
@@ -87,6 +88,7 @@ async function runProfileQuery(options) {
     page: options.page,
     limit: options.limit,
     total: result.count,
+    total_pages: result.count === 0 ? 0 : Math.ceil(result.count / options.limit),
     data: result.rows.map(serializeProfile),
   };
 }
@@ -97,6 +99,16 @@ export async function listProfileRecords(filters) {
 
 export async function searchProfileRecords(query) {
   return runProfileQuery(buildSearchProfileQuery(query));
+}
+
+export async function exportProfileRecords(filters) {
+  const options = buildListProfileExportQuery(filters);
+  const profiles = await Profile.findAll({
+    where: options.where,
+    order: options.order,
+  });
+
+  return profiles.map(serializeProfile);
 }
 
 export async function deleteProfileRecord(id) {
