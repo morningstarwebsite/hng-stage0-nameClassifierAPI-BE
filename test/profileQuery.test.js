@@ -2,9 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { Op } from "sequelize";
 import {
+  buildListProfileCacheKey,
   buildListProfileExportQuery,
   buildListProfileQuery,
+  buildSearchProfileCacheKey,
   buildSearchProfileQuery,
+  normalizeProfileFilters,
 } from "../src/services/profileQueryService.js";
 import { parseNaturalLanguageProfileQuery } from "../src/services/profileSearchService.js";
 
@@ -69,6 +72,20 @@ test("parseNaturalLanguageProfileQuery handles documented examples", () => {
     age_group: "teenager",
     min_age: 17,
   });
+
+  assert.deepEqual(parseNaturalLanguageProfileQuery("Nigerian females between ages 20 and 45"), {
+    gender: "female",
+    country_id: "NG",
+    min_age: 20,
+    max_age: 45,
+  });
+
+  assert.deepEqual(parseNaturalLanguageProfileQuery("Women aged 20-45 living in Nigeria"), {
+    gender: "female",
+    country_id: "NG",
+    min_age: 20,
+    max_age: 45,
+  });
 });
 
 test("buildSearchProfileQuery applies parsed search filters with pagination defaults", () => {
@@ -79,4 +96,57 @@ test("buildSearchProfileQuery applies parsed search filters with pagination defa
   assert.equal(result.where.gender, "male");
   assert.equal(result.where.age_group, "adult");
   assert.equal(result.where.country_id, "KE");
+});
+
+test("normalizeProfileFilters returns a canonical object shape", () => {
+  assert.deepEqual(
+    normalizeProfileFilters({
+      max_age: 45,
+      gender: "female",
+      country_id: "NG",
+      min_age: 20,
+    }),
+    {
+      gender: "female",
+      country_id: "NG",
+      min_age: 20,
+      max_age: 45,
+    },
+  );
+});
+
+test("equivalent natural-language searches produce the same cache key", () => {
+  const firstKey = buildSearchProfileCacheKey({
+    q: "Nigerian females between ages 20 and 45",
+    order: "desc",
+  });
+  const secondKey = buildSearchProfileCacheKey({
+    q: "Women aged 20-45 living in Nigeria",
+    order: "desc",
+  });
+
+  assert.equal(firstKey, secondKey);
+});
+
+test("equivalent direct list filters produce the same cache key regardless of key order", () => {
+  const firstKey = buildListProfileCacheKey({
+    gender: "female",
+    country_id: "ng",
+    min_age: "20",
+    max_age: "45",
+    order: "desc",
+    page: "1",
+    limit: "10",
+  });
+  const secondKey = buildListProfileCacheKey({
+    limit: "10",
+    max_age: "45",
+    page: "1",
+    order: "desc",
+    min_age: "20",
+    country_id: "NG",
+    gender: "Female",
+  });
+
+  assert.equal(firstKey, secondKey);
 });

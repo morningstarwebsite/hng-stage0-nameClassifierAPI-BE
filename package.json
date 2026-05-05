@@ -5,6 +5,7 @@
   "type": "module",
   "main": "src/server.js",
   "scripts": {
+    "import:profiles:csv": "node src/scripts/importProfilesCsv.js",
     "migrate": "node src/migrations/runMigrations.js",
     "seed:profiles": "node src/scripts/seedProfiles.js",
     "start": "node src/server.js",

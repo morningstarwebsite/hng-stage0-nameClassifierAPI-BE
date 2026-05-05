@@ -23,6 +23,15 @@ const sortFieldMap = {
   created_at: "created_at",
   gender_probability: "gender_probability",
 };
+const normalizedFilterKeys = [
+  "gender",
+  "age_group",
+  "country_id",
+  "min_age",
+  "max_age",
+  "min_gender_probability",
+  "min_country_probability",
+];
 
 function invalidQueryParametersError() {
   return new AppError(422, "Invalid query parameters");
@@ -223,11 +232,55 @@ function buildWhereClause(filters) {
   return where;
 }
 
-function buildQueryOptions(filters, query, options = {}) {
-  const page = parsePositiveInteger(query.page, 1);
-  const limit = parsePositiveInteger(query.limit, 10, 50);
-  const sortBy = parseSortField(query.sort_by);
-  const order = parseSortOrder(query.order);
+function readQueryControls(query, options = {}) {
+  const controls = {
+    sort_by: parseSortField(query.sort_by),
+    order: parseSortOrder(query.order),
+  };
+
+  if (options.paginate) {
+    controls.page = parsePositiveInteger(query.page, 1);
+    controls.limit = parsePositiveInteger(query.limit, 10, 50);
+  }
+
+  return controls;
+}
+
+export function normalizeProfileFilters(filters) {
+  const normalized = {};
+
+  for (const key of normalizedFilterKeys) {
+    if (filters[key] !== undefined) {
+      normalized[key] = filters[key];
+    }
+  }
+
+  return normalized;
+}
+
+export function buildNormalizedQueryDescriptor({ mode, filters, controls, paginate }) {
+  const descriptor = {
+    mode,
+    filters: normalizeProfileFilters(filters),
+    sort_by: controls.sort_by,
+    order: controls.order,
+  };
+
+  if (paginate) {
+    descriptor.page = controls.page;
+    descriptor.limit = controls.limit;
+  }
+
+  return descriptor;
+}
+
+export function serializeNormalizedQueryDescriptor(descriptor) {
+  return JSON.stringify(descriptor);
+}
+
+function buildQueryOptions(filters, controls, options = {}) {
+  const sortBy = controls.sort_by;
+  const order = controls.order;
 
   if (filters.min_age !== undefined && filters.max_age !== undefined && filters.min_age > filters.max_age) {
     throw invalidQueryParametersError();
@@ -245,9 +298,9 @@ function buildQueryOptions(filters, query, options = {}) {
 
   return {
     ...queryOptions,
-    page,
-    limit,
-    offset: (page - 1) * limit,
+    page: controls.page,
+    limit: controls.limit,
+    offset: (controls.page - 1) * controls.limit,
   };
 }
 
@@ -265,12 +318,18 @@ function extractDirectFilters(query) {
 
 export function buildListProfileQuery(query) {
   validateAllowedKeys(query, allowedListQueryKeys);
-  return buildQueryOptions(extractDirectFilters(query), query, { paginate: true });
+  const filters = extractDirectFilters(query);
+  const controls = readQueryControls(query, { paginate: true });
+
+  return buildQueryOptions(filters, controls, { paginate: true });
 }
 
 export function buildListProfileExportQuery(query) {
   validateAllowedKeys(query, allowedListQueryKeys);
-  return buildQueryOptions(extractDirectFilters(query), query, { paginate: false });
+  const filters = extractDirectFilters(query);
+  const controls = readQueryControls(query, { paginate: false });
+
+  return buildQueryOptions(filters, controls, { paginate: false });
 }
 
 export function buildSearchProfileQuery(query) {
@@ -284,6 +343,59 @@ export function buildSearchProfileQuery(query) {
 
   // Search reuses the same query builder as direct filters after the text is parsed.
   const filters = parseNaturalLanguageProfileQuery(searchTerm);
+  const controls = readQueryControls(query, { paginate: true });
 
-  return buildQueryOptions(filters, query, { paginate: true });
+  return buildQueryOptions(filters, controls, { paginate: true });
+}
+
+export function buildListProfileCacheKey(query) {
+  validateAllowedKeys(query, allowedListQueryKeys);
+  const filters = extractDirectFilters(query);
+  const controls = readQueryControls(query, { paginate: true });
+
+  return serializeNormalizedQueryDescriptor(
+    buildNormalizedQueryDescriptor({
+      mode: "list",
+      filters,
+      controls,
+      paginate: true,
+    }),
+  );
+}
+
+export function buildListProfileExportCacheKey(query) {
+  validateAllowedKeys(query, allowedListQueryKeys);
+  const filters = extractDirectFilters(query);
+  const controls = readQueryControls(query, { paginate: false });
+
+  return serializeNormalizedQueryDescriptor(
+    buildNormalizedQueryDescriptor({
+      mode: "export",
+      filters,
+      controls,
+      paginate: false,
+    }),
+  );
+}
+
+export function buildSearchProfileCacheKey(query) {
+  validateAllowedKeys(query, allowedSearchQueryKeys);
+
+  const searchTerm = readSingleQueryValue(query.q);
+
+  if (searchTerm === undefined || searchTerm === "") {
+    throw new AppError(400, "The 'q' parameter is required");
+  }
+
+  const filters = parseNaturalLanguageProfileQuery(searchTerm);
+  const controls = readQueryControls(query, { paginate: true });
+
+  return serializeNormalizedQueryDescriptor(
+    buildNormalizedQueryDescriptor({
+      mode: "search",
+      filters,
+      controls,
+      paginate: true,
+    }),
+  );
 }

@@ -1,6 +1,6 @@
-# Insighta Labs+ Stage 3 Backend
+# Insighta Labs+ Stage 4 Backend
 
-This repository extends the existing HNG Stage 2 profile intelligence API into a secured Stage 3 platform without rebuilding the original system. The Stage 2 profile enrichment, filtering, sorting, pagination, and natural-language search behavior remain in place, and Stage 3 layers GitHub OAuth with PKCE, rotating sessions, role-based access control, API version enforcement, CSV export, rate limiting, and request logging on top.
+This repository extends the HNG Stage 2 profile intelligence API through Stage 3 (security: GitHub OAuth, RBAC, rate limiting) into Stage 4 (performance: query caching, indexing, deterministic normalization, streaming CSV ingestion). The original Stage 2 profile enrichment, filtering, sorting, pagination, and natural-language search behavior remain fully intact. Stage 4 adds sub-10ms cached query response times and reliable bulk ingestion of up to 500,000 profiles.
 
 ## Architecture
 
@@ -27,6 +27,16 @@ Request flow:
 - Adds admin and analyst roles with centralized authorization guards.
 - Adds in-process rate limiting and structured request logging.
 - Uses HTTP-only cookies for browser sessions plus CSRF protection on state-changing session-backed requests.
+
+## Stage 4 Features
+
+- **In-Memory Query Cache**: all list, search, and export queries are cached with a 30-second TTL and returned in under 10 ms on cache hits. Four namespaces isolate caches by query type.
+- **Performance Indexes**: functional index on `LOWER(name)` for case-insensitive lookups; composite indexes on `(created_at, id)`, `(age, id)`, `(gender_probability, id)`, and `(gender, age_group, country_id)` for stable pagination and filter optimization.
+- **Query Normalization**: equivalent queries with different parameter order or natural-language phrasing always produce the same cache key, maximizing cache hits.
+- **Enhanced Natural-Language Search**: recognizes age-range phrases (`between ages 20 and 45`, `aged 20–45`), broad country phrases (`in Nigeria`, `living in`), and auto-generated demonym aliases (`Nigerian` → `NG`).
+- **Streaming CSV Bulk Ingestion**: imports up to 500,000 profiles in batches of 1,000, skips duplicates and malformed rows without aborting, yields the event loop between batches, and returns a detailed summary.
+- **Explicit Connection Pooling**: configurable PostgreSQL connection pool (default max 20 connections, 30-second acquire timeout) to handle concurrent requests efficiently.
+- **Parallel Count + FindAll**: list and search queries run `Profile.count()` and `Profile.findAll()` in parallel via `Promise.all` for faster query completion.
 
 ## Data Model
 
@@ -143,6 +153,15 @@ All `/api/*` endpoints require authentication and `X-API-Version: 1`.
 - `POST /api/profiles`
 - `DELETE /api/profiles/:id`
 - `GET /api/profiles/export?format=csv`
+
+## Query Caching and Normalization
+
+All list, search, and export queries are cached in-process with a 30-second TTL. The cache is keyed on a normalized descriptor that is independent of parameter order or phrase variation:
+
+- `GET /api/profiles?gender=female&country_id=NG` caches the same result as `?country_id=NG&gender=female`
+- `GET /api/profiles/search?q=Nigerian+females+between+ages+20+and+45` produces the same cache key as `?q=Women+aged+20-45+living+in+Nigeria`
+
+This means equivalent queries always hit the cache, reducing database load and latency dramatically for repeated or semantically similar queries.
 
 ## Querying and Pagination
 
@@ -295,10 +314,13 @@ src/
     profileSearchService.js
     profileService.js
     profileTransformService.js
+    queryCacheService.js
+    profileCsvImportService.js
     tokenService.js
     upstreamService.js
   scripts/
     seedProfiles.js
+    importProfilesCsv.js
   utils/
     appError.js
     env.js
@@ -331,6 +353,19 @@ GITHUB_CLIENT_SECRET=your-github-oauth-client-secret
 GITHUB_REDIRECT_URI=http://localhost:3200/auth/github/callback
 ```
 
+Optional Stage 4 cache and import settings:
+
+```env
+QUERY_CACHE_TTL_MS=30000
+QUERY_CACHE_MAX_ENTRIES=500
+CSV_IMPORT_BATCH_SIZE=1000
+DB_POOL_MAX=20
+DB_POOL_MIN=0
+DB_POOL_ACQUIRE_MS=30000
+DB_POOL_IDLE_MS=10000
+DB_POOL_EVICT_MS=1000
+```
+
 Optional database split variables if `DATABASE_URL` is not used:
 
 ```env
@@ -354,7 +389,34 @@ npm install
 npm run migrate
 ```
 
-The app also runs pending migrations automatically at startup.
+The app also runs pending migrations automatically at startup. Stage 4 migrations add performance indexes automatically.
+
+### Seed Initial Data
+
+```bash
+npm run seed:profiles
+```
+
+This upserts profiles from `seed_profiles.json` in transactional batches.
+
+### Bulk Import Profiles from CSV
+
+```bash
+npm run import:profiles:csv -- ./path/to/profiles.csv
+```
+
+The CSV importer:
+- streams the file line by line
+- buffers rows into batches of 1,000 (or `CSV_IMPORT_BATCH_SIZE`)
+- checks for duplicates in the database with a single parameterized query per batch
+- skips malformed rows and duplicates without aborting
+- yields the event loop between batches to avoid blocking HTTP requests
+- returns a summary JSON with inserted, skipped, and per-reason skip counts
+
+Required CSV headers:
+```
+name,gender,gender_probability,age,age_group,country_id,country_name,country_probability
+```
 
 ### Start the Server
 
@@ -392,6 +454,13 @@ curl -H "Authorization: Bearer <access-token>" -H "X-API-Version: 1" "http://loc
 2. Set `DATABASE_URL` if Railway does not inject it automatically.
 3. Set `ACCESS_TOKEN_SECRET`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, and `GITHUB_REDIRECT_URI`.
 4. Ensure `GITHUB_REDIRECT_URI` uses your deployed Railway URL, for example `https://your-app.up.railway.app/auth/github/callback`.
-5. Deploy the service with `npm start`.
-6. On boot the service authenticates to PostgreSQL and runs pending migrations.
-7. Test the root route and the OAuth callback URL after deployment.
+5. Optionally configure Stage 4 settings: `QUERY_CACHE_TTL_MS`, `DB_POOL_MAX`, `CSV_IMPORT_BATCH_SIZE`.
+6. Deploy the service with `npm start`.
+7. On boot the service authenticates to PostgreSQL, runs pending migrations (including Stage 4 performance indexes), and begins serving requests.
+8. Test the root route and the OAuth callback URL after deployment.
+
+## Documentation
+
+- **SYSTEM_DESIGN_CONCISE.md**: 6–7 page overview of requirements, architecture, data flow, design decisions, trade-offs, and future evolution paths.
+- **STAGE4_REVIEW_REPORT.md**: beginner-friendly full explanation of the system, auth flow, RBAC, query handling, and database structure.
+- **SOLUTION.MD**: detailed implementation summary of Stage 4 improvements.

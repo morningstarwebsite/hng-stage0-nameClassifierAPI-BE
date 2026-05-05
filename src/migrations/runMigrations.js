@@ -5,12 +5,14 @@ import { migration as createProfilesMigration } from "./20260416-create-profiles
 import { migration as stage2ProfileQueryMigration } from "./20260421-stage2-profile-query-updates.js";
 import { migration as alignProfilesSchemaMigration } from "./20260421-align-profiles-required-schema.js";
 import { migration as stage3AuthSecurityMigration } from "./20260428-stage3-auth-and-security.js";
+import { migration as stage4PerformanceIndexesMigration } from "./20260504-stage4-performance-indexes.js";
 
 const migrations = [
   createProfilesMigration,
   stage2ProfileQueryMigration,
   alignProfilesSchemaMigration,
   stage3AuthSecurityMigration,
+  stage4PerformanceIndexesMigration,
 ];
 const migrationTableName = "schema_migrations";
 

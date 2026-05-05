@@ -33,17 +33,50 @@ const countryNameToCode = new Map(
   supportedRegionCodes.map((code) => [normalizeCountryTerm(regionDisplayNames.of(code)), code]),
 );
 
+function buildGeneratedDemonymAliases() {
+  const aliases = [];
+
+  for (const code of supportedRegionCodes) {
+    const countryName = normalizeCountryTerm(regionDisplayNames.of(code));
+
+    if (countryName.endsWith("a")) {
+      aliases.push([`${countryName.slice(0, -1)}an`, code]);
+    }
+
+    if (countryName.endsWith("e")) {
+      aliases.push([`${countryName}an`, code]);
+    }
+
+    if (countryName.endsWith("y")) {
+      aliases.push([`${countryName.slice(0, -1)}ian`, code]);
+    }
+
+    if (countryName.endsWith("n")) {
+      aliases.push([`${countryName}ian`, code]);
+    }
+  }
+
+  return aliases;
+}
+
 const countryAliases = new Map([
   ["uk", "GB"],
   ["u k", "GB"],
   ["great britain", "GB"],
   ["britain", "GB"],
+  ["british", "GB"],
   ["usa", "US"],
   ["u s a", "US"],
   ["us", "US"],
   ["u s", "US"],
   ["united states", "US"],
   ["united states of america", "US"],
+  ["american", "US"],
+  ["ghanaian", "GH"],
+  ["nigerian", "NG"],
+  ["kenyan", "KE"],
+  ["angolan", "AO"],
+  ...buildGeneratedDemonymAliases(),
 ]);
 
 export function getCountryName(countryId) {

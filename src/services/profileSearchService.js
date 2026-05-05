@@ -2,6 +2,11 @@ import { AppError } from "../utils/appError.js";
 import { lookupCountryCode } from "./countryLookupService.js";
 
 // These patterns keep the parser deterministic by only accepting explicit age phrases.
+const ageRangePatterns = [
+  /\bbetween(?:\s+ages?)?\s+(\d{1,3})\s+(?:and|to)\s+(\d{1,3})\b/i,
+  /\baged?\s+(\d{1,3})\s*(?:-|to)\s*(\d{1,3})\b/i,
+  /\bages?\s+(\d{1,3})\s*(?:-|to)\s*(\d{1,3})\b/i,
+];
 const minimumAgePatterns = [
   /\b(?:above|over|older than|at least)\s+(\d{1,3})\b/i,
 ];
@@ -10,7 +15,27 @@ const maximumAgePatterns = [
 ];
 
 function normalizeSearchQuery(query) {
-  return query.toLowerCase().replace(/[^a-z0-9\s'-]/g, " ").replace(/\s+/g, " ").trim();
+  return query
+    .toLowerCase()
+    .replace(/[\u2012\u2013\u2014\u2212]/g, "-")
+    .replace(/[^a-z0-9\s'-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function getAgeRange(query) {
+  for (const pattern of ageRangePatterns) {
+    const match = query.match(pattern);
+
+    if (match) {
+      return {
+        minAge: Math.min(Number(match[1]), Number(match[2])),
+        maxAge: Math.max(Number(match[1]), Number(match[2])),
+      };
+    }
+  }
+
+  return null;
 }
 
 function getMatchNumber(query, patterns) {
@@ -62,9 +87,19 @@ function getAgeGroupFilter(query) {
 }
 
 function getCountryFilter(query) {
-  const match = query.match(/\b(?:from|in)\s+([a-z][a-z\s'-]*)/i);
+  const match = query.match(/\b(?:from|in|living in)\s+([a-z][a-z\s'-]*)/i);
 
   if (!match) {
+    const adjectiveTokens = query.match(/\b[a-z]+(?:an|ian|ese|ish)\b/g) || [];
+
+    for (const token of adjectiveTokens) {
+      const code = lookupCountryCode(token);
+
+      if (code) {
+        return code;
+      }
+    }
+
     return undefined;
   }
 
@@ -92,6 +127,7 @@ export function parseNaturalLanguageProfileQuery(query) {
   const gender = getGenderFilter(normalizedQuery);
   const ageGroup = getAgeGroupFilter(normalizedQuery);
   const countryId = getCountryFilter(normalizedQuery);
+  const ageRange = getAgeRange(normalizedQuery);
   const minAge = getMatchNumber(normalizedQuery, minimumAgePatterns);
   const maxAge = getMatchNumber(normalizedQuery, maximumAgePatterns);
   const isYoung = /\byoung\b/.test(normalizedQuery);
@@ -112,6 +148,11 @@ export function parseNaturalLanguageProfileQuery(query) {
     // "young" is a parsing shortcut only; it is never stored as an age_group value.
     filters.min_age = 16;
     filters.max_age = 24;
+  }
+
+  if (ageRange) {
+    filters.min_age = ageRange.minAge;
+    filters.max_age = ageRange.maxAge;
   }
 
   if (minAge !== undefined) {

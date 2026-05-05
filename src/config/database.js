@@ -5,6 +5,13 @@ import { runMigrations } from "../migrations/runMigrations.js";
 const commonOptions = {
   dialect: "postgres",
   logging: false,
+  pool: {
+    max: Number(process.env.DB_POOL_MAX || 20),
+    min: Number(process.env.DB_POOL_MIN || 0),
+    acquire: Number(process.env.DB_POOL_ACQUIRE_MS || 30_000),
+    idle: Number(process.env.DB_POOL_IDLE_MS || 10_000),
+    evict: Number(process.env.DB_POOL_EVICT_MS || 1_000),
+  },
 };
 
 function buildSequelizeInstance() {
